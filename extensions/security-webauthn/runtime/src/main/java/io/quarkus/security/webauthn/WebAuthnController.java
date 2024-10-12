@@ -24,18 +24,18 @@ public class WebAuthnController {
 
     private static final Logger log = Logger.getLogger(WebAuthnController.class);
 
-    private String challengeUsernameCookie;
-    private String challengeCookie;
+    private final String challengeUsernameCookie;
+    private final String challengeCookie;
 
-    private WebAuthnSecurity security;
+    private final WebAuthnSecurity security;
 
-    private String origin;
+    private final String origin;
 
     private String domain;
 
-    private IdentityProviderManager identityProviderManager;
+    private final IdentityProviderManager identityProviderManager;
 
-    private WebAuthnAuthenticationMechanism authMech;
+    private final WebAuthnAuthenticationMechanism authMech;
 
     public WebAuthnController(WebAuthnSecurity security, WebAuthnRunTimeConfig config,
             IdentityProviderManager identityProviderManager,
@@ -97,6 +97,16 @@ public class WebAuthnController {
         }
     }
 
+    private static void ok(RoutingContext ctx) {
+        ctx.response()
+                .setStatusCode(204)
+                .end();
+    }
+
+    private static void ok(RoutingContext ctx, JsonObject result) {
+        ctx.json(result);
+    }
+
     /**
      * Endpoint for getting a register challenge
      *
@@ -153,14 +163,19 @@ public class WebAuthnController {
             // might throw runtime exception if there's no json or is bad formed
             final JsonObject webauthnLogin = ctx.getBodyAsJson();
 
-            if (webauthnLogin == null || !containsRequiredString(webauthnLogin, "name")) {
-                ctx.fail(400, new IllegalArgumentException("Request missing 'name' field"));
-                return;
-            }
+            //            if (webauthnLogin == null || !containsRequiredString(webauthnLogin, "name")) {
+            //                ctx.fail(400, new IllegalArgumentException("Request missing 'name' field"));
+            //                return;
+            //            }
 
             // input basic validation is OK
 
-            final String username = webauthnLogin.getString("name");
+            String username;
+            if (containsRequiredString(webauthnLogin, "name")) {
+                username = webauthnLogin.getString("name");
+            } else {
+                username = null;
+            }
 
             ManagedContext requestContext = Arc.container().requestContext();
             requestContext.activate();
@@ -177,8 +192,10 @@ public class WebAuthnController {
 
                 authMech.getLoginManager().save(getAssertion.getString("challenge"), ctx, challengeCookie, null,
                         ctx.request().isSSL());
-                authMech.getLoginManager().save(username, ctx, challengeUsernameCookie, null,
-                        ctx.request().isSSL());
+                if (containsRequiredString(webauthnLogin, "name")) {
+                    authMech.getLoginManager().save(username, ctx, challengeUsernameCookie, null,
+                            ctx.request().isSSL());
+                }
 
                 ok(ctx, getAssertion);
             });
@@ -215,8 +232,10 @@ public class WebAuthnController {
 
             RestoreResult challenge = authMech.getLoginManager().restore(ctx, challengeCookie);
             RestoreResult username = authMech.getLoginManager().restore(ctx, challengeUsernameCookie);
-            if (challenge == null || challenge.getPrincipal() == null || challenge.getPrincipal().isEmpty()
-                    || username == null || username.getPrincipal() == null || username.getPrincipal().isEmpty()) {
+            // A resident key does not need a username to be discovered.
+            // So we are only unable to discover the user if both are missing
+            if ((challenge == null || challenge.getPrincipal() == null || challenge.getPrincipal().isEmpty())
+                    && (username == null || username.getPrincipal() == null || username.getPrincipal().isEmpty())) {
                 ctx.fail(400, new IllegalArgumentException("Missing challenge or username"));
                 return;
             }
@@ -230,8 +249,12 @@ public class WebAuthnController {
                     .setOrigin(origin)
                     .setDomain(domain)
                     .setChallenge(challenge.getPrincipal())
-                    .setUsername(username.getPrincipal())
                     .setWebauthn(webauthnResp);
+            // When we have a non-resident key in the device we ne forcefully the username
+            // to get the credential from the provider
+            if (username != null) {
+                credentials.setUsername(username.getPrincipal());
+            }
             identityProviderManager
                     .authenticate(HttpSecurityUtils
                             .setRoutingContextAttribute(new WebAuthnAuthenticationRequest(credentials), ctx))
@@ -277,16 +300,6 @@ public class WebAuthnController {
     public void logout(RoutingContext ctx) {
         authMech.getLoginManager().clear(ctx);
         ctx.redirect("/");
-    }
-
-    private static void ok(RoutingContext ctx) {
-        ctx.response()
-                .setStatusCode(204)
-                .end();
-    }
-
-    private static void ok(RoutingContext ctx, JsonObject result) {
-        ctx.json(result);
     }
 
     public void javascript(RoutingContext ctx) {

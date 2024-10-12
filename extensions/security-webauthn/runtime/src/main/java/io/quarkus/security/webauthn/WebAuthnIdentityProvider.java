@@ -44,7 +44,7 @@ public class WebAuthnIdentityProvider implements IdentityProvider<WebAuthnAuthen
                             QuarkusSecurityIdentity.Builder builder = QuarkusSecurityIdentity.builder();
                             // only the username matters, because when we auth we create a session cookie with it
                             // and we reply instantly so the roles are never used
-                            builder.setPrincipal(new QuarkusPrincipal(request.getCredentials().getUsername()));
+                            builder.setPrincipal(new QuarkusPrincipal(event.result().principal().getString("userName")));
                             emitter.complete(builder.build());
                         }
                     }
